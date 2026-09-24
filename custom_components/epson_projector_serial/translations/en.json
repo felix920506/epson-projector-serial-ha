@@ -1,0 +1,56 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Epson projector serial bridge",
+        "description": "Enter the address of the TCP-to-serial bridge wired to the projector's RS-232 port (9600 8-N-1).",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "name": "Name"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the serial bridge.",
+          "port": "TCP port the bridge exposes the serial link on.",
+          "name": "Name for the projector device in Home Assistant."
+        }
+      },
+      "reconfigure": {
+        "title": "Epson projector serial bridge",
+        "description": "Update the address of the serial bridge. The projector keeps its entity and history.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "name": "Name"
+        },
+        "data_description": {
+          "host": "IP address or hostname of the serial bridge.",
+          "port": "TCP port the bridge exposes the serial link on.",
+          "name": "Name for the projector device in Home Assistant."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the bridge, or it never sent the ESC/VP21 ready prompt.",
+      "invalid_response": "The bridge answered but the projector did not return a valid PWR code. Check the baud rate (9600 8-N-1) and the cable.",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This bridge is already configured.",
+      "reconfigure_successful": "The bridge address was updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "data": {
+          "scan_interval": "Polling interval (seconds)"
+        },
+        "data_description": {
+          "scan_interval": "How often to ask the projector for its power state."
+        }
+      }
+    }
+  }
+}
