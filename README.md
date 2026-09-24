@@ -144,3 +144,7 @@ Other Epson models using ESC/VP21 should work; reports welcome.
 this integration replaces. It is kept for reference only — once the integration
 is set up, remove it from `configuration.yaml`, since two pollers competing for
 a single-connection bridge will cause both to fail intermittently.
+
+## License
+
+[MIT](LICENSE)
