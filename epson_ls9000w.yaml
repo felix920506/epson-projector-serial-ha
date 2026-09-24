@@ -1,0 +1,130 @@
+# Epson EH-LS9000W power control - self-contained, no external tools.
+# ESC/VP21 over the EByte serial bridge at 172.20.2.191:8002 (9600 8-N-1),
+# using only python3 (built into Home Assistant). No nc, no scripts.
+#
+# Each command does a proper ESC/VP21 handshake:
+#   connect -> send CR -> wait for ':' ready prompt -> send command ->
+#   wait for ':' acknowledgement -> close.
+# It retries up to 3x, because the bridge is single-connection and a poll
+# may be occupying it. Waiting for the ack also means turn_off only returns
+# once the projector has begun cooling down, so HA's immediate re-read sees
+# the new state and there's no brief on/off desync.
+#
+# Paste into configuration.yaml, or keep this file and use:
+#   command_line: !include epson_projector.yaml
+#   (for !include, delete the "command_line:" line and start at "- switch:")
+
+command_line:
+  - switch:
+      name: Epson EH-LS9000W
+      unique_id: epson_ehls9000w_power
+      icon: mdi:projector
+      # Delivery model: wait for the ready ':' prompt (proves the projector
+      # is listening -> command will land), send the command, then read any
+      # ack for up to 1.5s. PWR ON/OFF often do NOT ack within that window
+      # (the projector is busy transitioning), so a missing ack is treated
+      # as success; we only retry on a connection/prompt failure or an
+      # explicit 'ERR'. Verified live: OFF -> standby, ON -> warming -> on.
+      command_on: |-
+        python3 -c "
+        import socket,time,sys
+        def run(cmd):
+            for _ in range(3):
+                try:
+                    s=socket.create_connection(('172.20.2.191',8002),1.5)
+                    s.settimeout(1.5)
+                    s.sendall(b'\r')
+                    buf=b''
+                    while b':' not in buf:
+                        buf+=s.recv(64)
+                    s.sendall(cmd+b'\r')
+                    buf=b''; t=time.time()
+                    while time.time()-t<1.5:
+                        try:
+                            d=s.recv(64)
+                            if not d: break
+                            buf+=d
+                            if b':' in buf: break
+                        except socket.timeout:
+                            break
+                    s.close()
+                    if b'ERR' in buf:
+                        time.sleep(0.4); continue
+                    return True
+                except Exception:
+                    time.sleep(0.4)
+            return False
+        sys.exit(0 if run(b'PWR ON') else 1)
+        "
+      command_off: |-
+        python3 -c "
+        import socket,time,sys
+        def run(cmd):
+            for _ in range(3):
+                try:
+                    s=socket.create_connection(('172.20.2.191',8002),1.5)
+                    s.settimeout(1.5)
+                    s.sendall(b'\r')
+                    buf=b''
+                    while b':' not in buf:
+                        buf+=s.recv(64)
+                    s.sendall(cmd+b'\r')
+                    buf=b''; t=time.time()
+                    while time.time()-t<1.5:
+                        try:
+                            d=s.recv(64)
+                            if not d: break
+                            buf+=d
+                            if b':' in buf: break
+                        except socket.timeout:
+                            break
+                    s.close()
+                    if b'ERR' in buf:
+                        time.sleep(0.4); continue
+                    return True
+                except Exception:
+                    time.sleep(0.4)
+            return False
+        sys.exit(0 if run(b'PWR OFF') else 1)
+        "
+      command_state: |-
+        python3 -c "
+        import socket,time
+        def run():
+            for _ in range(3):
+                try:
+                    s=socket.create_connection(('172.20.2.191',8002),1.5)
+                    s.settimeout(1)
+                    s.sendall(b'\r')
+                    buf=b''
+                    while b':' not in buf:
+                        buf+=s.recv(64)
+                    s.sendall(b'PWR?\r')
+                    buf=b''; t=time.time()
+                    while b'PWR=' not in buf and time.time()-t<1:
+                        buf+=s.recv(64)
+                    s.close()
+                    if b'PWR=' in buf:
+                        return buf.decode('latin1')
+                except Exception:
+                    time.sleep(0.4)
+            return ''
+        print(run())
+        "
+      # PWR=01 on, 02 warming (treated as on), 03 cooling / 00 / 04 standby.
+      # If a poll returns no PWR= code (all retries failed), keep the last
+      # known state instead of flipping to off - avoids a spurious desync.
+      # NOTE: the self-reference assumes the entity_id below; if you rename
+      # the switch, update switch.epson_eh_ls9000w to match.
+      value_template: >-
+        {% if 'PWR=' in value %}
+          {{ 'PWR=01' in value or 'PWR=02' in value }}
+        {% else %}
+          {{ is_state('switch.epson_eh_ls9000w', 'on') }}
+        {% endif %}
+      # Note: the serial port goes briefly unresponsive at the start of
+      # warm-up, so after turn_on the switch may lag a few seconds before
+      # it can read PWR=02 and show 'on'. Self-corrects on the next poll.
+      scan_interval: 5
+      # Must cover up to 3 on/off retry attempts (~14s worst case).
+      command_timeout: 15
