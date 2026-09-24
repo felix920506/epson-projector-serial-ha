@@ -10,9 +10,8 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
 from homeassistant.core import HomeAssistant
 
-from custom_components.epson_projector_serial.const import DOMAIN
-
 from .fake_projector import FakeProjector
+from custom_components.epson_projector_serial.const import DOMAIN
 
 
 @pytest.fixture(autouse=True)
@@ -21,8 +20,12 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
 
 
 @pytest.fixture
-async def projector() -> AsyncGenerator[FakeProjector]:
-    """Run a fake projector for the duration of a test."""
+async def projector(socket_enabled: None) -> AsyncGenerator[FakeProjector]:
+    """Run a fake projector for the duration of a test.
+
+    socket_enabled lifts pytest-socket's block: the fake speaks over a real
+    loopback socket so the client's own connection handling is under test.
+    """
     fake = FakeProjector()
     await fake.start()
     yield fake

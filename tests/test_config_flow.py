@@ -10,9 +10,8 @@ from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT, CONF_SCAN_INTER
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
-from custom_components.epson_projector_serial.const import DOMAIN
-
 from .fake_projector import FakeProjector
+from custom_components.epson_projector_serial.const import DOMAIN
 
 
 async def test_user_flow(hass: HomeAssistant, projector: FakeProjector) -> None:

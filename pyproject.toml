@@ -6,8 +6,12 @@ asyncio_mode = "auto"
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "D", "ASYNC", "RUF"]
+select = ["E", "F", "I", "UP", "B", "D", "ASYNC", "BLE", "RUF"]
 ignore = ["D203", "D213"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["D"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["homeassistant"]
+known-local-folder = ["custom_components", "tests"]

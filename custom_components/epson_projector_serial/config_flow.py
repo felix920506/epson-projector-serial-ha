@@ -46,7 +46,7 @@ async def _async_check_projector(host: str, port: int) -> str | None:
         return "cannot_connect"
     except EpsonError:
         return "invalid_response"
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOGGER.exception("Unexpected error connecting to %s", bridge.target)
         return "unknown"
     return None

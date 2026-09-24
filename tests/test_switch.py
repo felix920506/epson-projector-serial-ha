@@ -6,10 +6,7 @@ from datetime import timedelta
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
-from pytest_homeassistant_custom_component.common import (
-    MockConfigEntry,
-    async_fire_time_changed,
-)
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
@@ -24,17 +21,24 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from custom_components.epson_projector_serial.const import DOMAIN
-
 from .fake_projector import FakeProjector
 
 ENTITY_ID = "switch.epson_projector"
 
 
-async def _poll(hass: HomeAssistant, freezer: FrozenDateTimeFactory, seconds: int = 30):
-    """Advance time far enough to trigger a poll and let it finish."""
-    freezer.tick(timedelta(seconds=seconds))
-    async_fire_time_changed(hass)
+async def _poll(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    """Run one coordinator poll and wait for it to finish.
+
+    The scheduled refresh runs as a background task that async_block_till_done
+    does not wait for, so the refresh is driven directly instead of through the
+    timer.
+
+    Note the absence of a freezer here. Under this harness freezegun also
+    freezes the event loop clock, so anything that awaits asyncio.sleep -- the
+    client's retry delay, the fake projector's dribble mode -- never wakes up.
+    Only the grace-period test freezes time, and it does no sleeping.
+    """
+    await entry.runtime_data.async_refresh()
     await hass.async_block_till_done()
 
 
@@ -74,7 +78,6 @@ async def test_turn_on_and_off(
     hass: HomeAssistant,
     setup_integration: MockConfigEntry,
     projector: FakeProjector,
-    freezer: FrozenDateTimeFactory,
 ) -> None:
     """Turning the switch sends the command and reflects it immediately."""
     await hass.services.async_call(
@@ -90,7 +93,7 @@ async def test_turn_on_and_off(
     assert hass.states.get(ENTITY_ID).state == STATE_ON
 
     # Warming up still reads as on once the projector answers again.
-    await _poll(hass, freezer)
+    await _poll(hass, setup_integration)
     assert hass.states.get(ENTITY_ID).state == STATE_ON
     assert hass.states.get(ENTITY_ID).attributes["power_code"] == "02"
 
@@ -115,18 +118,20 @@ async def test_stale_reading_held_during_grace_period(
 ) -> None:
     """A projector still reporting standby right after PWR ON does not flip back."""
     projector.power = "00"
-    await _poll(hass, freezer)
+    await _poll(hass, setup_integration)
     assert hass.states.get(ENTITY_ID).state == STATE_OFF
 
     await hass.services.async_call(
         SWITCH_DOMAIN, SERVICE_TURN_ON, {ATTR_ENTITY_ID: ENTITY_ID}, blocking=True
     )
     projector.power = "00"  # not caught up yet
-    await _poll(hass, freezer, seconds=5)
+    freezer.tick(timedelta(seconds=5))
+    await _poll(hass, setup_integration)
     assert hass.states.get(ENTITY_ID).state == STATE_ON
 
     # Once the grace period lapses, the projector is believed again.
-    await _poll(hass, freezer, seconds=60)
+    freezer.tick(timedelta(seconds=60))
+    await _poll(hass, setup_integration)
     assert hass.states.get(ENTITY_ID).state == STATE_OFF
 
 
@@ -145,21 +150,20 @@ async def test_busy_bridge_keeps_state_then_goes_unavailable(
     hass: HomeAssistant,
     setup_integration: MockConfigEntry,
     projector: FakeProjector,
-    freezer: FrozenDateTimeFactory,
 ) -> None:
     """Short outages keep the last state; a sustained one marks it unavailable."""
     assert hass.states.get(ENTITY_ID).state == STATE_ON
 
     projector.mode = "offline"
-    await _poll(hass, freezer)
+    await _poll(hass, setup_integration)
     assert hass.states.get(ENTITY_ID).state == STATE_ON
-    await _poll(hass, freezer)
+    await _poll(hass, setup_integration)
     assert hass.states.get(ENTITY_ID).state == STATE_ON
-    await _poll(hass, freezer)
+    await _poll(hass, setup_integration)
     assert hass.states.get(ENTITY_ID).state == STATE_UNAVAILABLE
 
     projector.mode = "normal"
-    await _poll(hass, freezer)
+    await _poll(hass, setup_integration)
     assert hass.states.get(ENTITY_ID).state == STATE_ON
 
 
@@ -178,12 +182,11 @@ async def test_dribbled_reply_is_read_in_full(
     hass: HomeAssistant,
     setup_integration: MockConfigEntry,
     projector: FakeProjector,
-    freezer: FrozenDateTimeFactory,
 ) -> None:
     """A reply arriving byte by byte is still parsed correctly."""
     projector.mode = "dribble"
     projector.power = "00"
-    await _poll(hass, freezer)
+    await _poll(hass, setup_integration)
     assert hass.states.get(ENTITY_ID).state == STATE_OFF
     assert hass.states.get(ENTITY_ID).attributes["power_code"] == "00"
 

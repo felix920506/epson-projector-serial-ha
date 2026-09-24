@@ -86,7 +86,7 @@ class EpsonSerialBridge:
         reply = await self._async_execute(
             POWER_QUERY,
             matcher=_power_reply_received,
-            timeout=QUERY_TIMEOUT,
+            read_timeout=QUERY_TIMEOUT,
             attempts=QUERY_ATTEMPTS,
         )
         match = POWER_REPLY_RE.search(reply)
@@ -102,7 +102,7 @@ class EpsonSerialBridge:
         # ack is not treated as a failure. Reaching the ready prompt before
         # sending is what proves the command landed.
         await self._async_execute(
-            command, matcher=None, timeout=ACK_TIMEOUT, attempts=COMMAND_ATTEMPTS
+            command, matcher=None, read_timeout=ACK_TIMEOUT, attempts=COMMAND_ATTEMPTS
         )
 
     async def _async_execute(
@@ -110,17 +110,19 @@ class EpsonSerialBridge:
         command: bytes,
         *,
         matcher: ReplyMatcher | None,
-        timeout: float,
+        read_timeout: float,
         attempts: int,
     ) -> bytes:
         """Run a command, retrying while the bridge is busy."""
         async with self._lock:
-            last_error: EpsonError = EpsonCommandError(f"No attempt made for {command!r}")
+            last_error: EpsonError = EpsonCommandError(
+                f"No attempt made for {command!r}"
+            )
             for attempt in range(attempts):
                 if attempt:
                     await asyncio.sleep(RETRY_DELAY)
                 try:
-                    return await self._async_attempt(command, matcher, timeout)
+                    return await self._async_attempt(command, matcher, read_timeout)
                 except EpsonError as err:
                     last_error = err
                     _LOGGER.debug(
@@ -134,7 +136,7 @@ class EpsonSerialBridge:
             raise last_error
 
     async def _async_attempt(
-        self, command: bytes, matcher: ReplyMatcher | None, timeout: float
+        self, command: bytes, matcher: ReplyMatcher | None, read_timeout: float
     ) -> bytes:
         """Perform a single handshake and return whatever the reply was."""
         try:
@@ -160,10 +162,12 @@ class EpsonSerialBridge:
             await writer.drain()
 
             reply, complete = await self._async_read(
-                reader, matcher or _prompt_received, timeout
+                reader, matcher or _prompt_received, read_timeout
             )
         except OSError as err:
-            raise EpsonConnectionError(f"Lost {self.target} mid-command: {err}") from err
+            raise EpsonConnectionError(
+                f"Lost {self.target} mid-command: {err}"
+            ) from err
         finally:
             await self._async_close(writer)
 
@@ -173,16 +177,17 @@ class EpsonSerialBridge:
             # A reply that never arrived, or arrived truncated. Only queries
             # insist on one; power commands pass matcher=None.
             raise EpsonCommandError(
-                f"Incomplete reply to {command!r} within {timeout}s (got {reply!r})"
+                f"Incomplete reply to {command!r} within {read_timeout}s"
+                f" (got {reply!r})"
             )
         return reply
 
     async def _async_read(
-        self, reader: asyncio.StreamReader, matcher: ReplyMatcher, timeout: float
+        self, reader: asyncio.StreamReader, matcher: ReplyMatcher, read_timeout: float
     ) -> tuple[bytes, bool]:
         """Read until the reply is complete, the peer closes, or time is up."""
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
+        deadline = loop.time() + read_timeout
         buffer = b""
         while not matcher(buffer):
             remaining = deadline - loop.time()
