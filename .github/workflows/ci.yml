@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  # Home Assistant ships a release every month and this integration tracks
+  # whatever is current, so a weekly run catches breakage before a user does.
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+# A new push supersedes whatever is still running for the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Home Assistant depends on uv, whose wheel is large enough to trip the
+  # default 30s HTTP timeout on a slow runner.
+  UV_HTTP_TIMEOUT: 600
+  # Keep in step with the Python version current Home Assistant requires.
+  PYTHON_VERSION: "3.14"
+
+jobs:
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements-test.txt
+
+      - name: Install dependencies
+        run: uv pip install --system -r requirements-test.txt
+
+      - name: Show versions under test
+        run: |
+          python -c "from homeassistant.const import __version__ as v; print('Home Assistant', v)"
+          python -VV
+
+      - name: Run tests
+        run: pytest -v --durations=10
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install ruff
+        run: uv pip install --system ruff
+
+      - name: Lint
+        run: ruff check --output-format=github .
+
+  hassfest:
+    name: hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # Distributed as a custom repository, so no entry is expected in
+          # home-assistant/brands.
+          ignore: brands

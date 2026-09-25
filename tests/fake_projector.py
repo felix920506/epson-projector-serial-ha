@@ -38,7 +38,10 @@ class FakeProjector:
             if self.mode == "offline":
                 return
             if self.mode == "no_prompt":
-                await asyncio.sleep(5)
+                # Hold the connection open, silently, for longer than the
+                # client waits for the ready prompt. Server.wait_closed waits
+                # on handlers, so keep it tight.
+                await asyncio.sleep(2)
                 return
 
             await reader.read(64)  # the leading CR
