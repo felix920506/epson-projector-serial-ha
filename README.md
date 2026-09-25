@@ -131,6 +131,11 @@ pytest
 
 The test suite runs the integration against a fake ESC/VP21 bridge, so the
 socket handling, retries and state mapping are all covered without hardware.
+It needs Python 3.14, which recent Home Assistant releases require.
+
+Verified against Home Assistant 2026.9.3 (Python 3.14.7). The stated 2025.1
+minimum reflects the Home Assistant APIs this integration uses, not a tested
+floor.
 
 ## Tested with
 
