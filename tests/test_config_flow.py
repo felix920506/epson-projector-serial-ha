@@ -43,7 +43,7 @@ async def test_user_flow(hass: HomeAssistant, projector: FakeProjector) -> None:
 @pytest.mark.parametrize(
     ("mode", "error"),
     [
-        ("offline", "cannot_connect"),
+        ("drop", "cannot_connect"),
         ("no_prompt", "cannot_connect"),
         ("err", "invalid_response"),
     ],

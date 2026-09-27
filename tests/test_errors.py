@@ -37,7 +37,7 @@ async def test_unreachable_bridge_raises_translated_error(
     hass: HomeAssistant, setup_integration: MockConfigEntry, projector: FakeProjector
 ) -> None:
     """A bridge that cannot be reached reports cannot_connect."""
-    projector.mode = "offline"
+    await projector.pause()  # genuinely unreachable
 
     with pytest.raises(HomeAssistantError) as caught:
         await _turn_on(hass)

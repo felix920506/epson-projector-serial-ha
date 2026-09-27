@@ -54,11 +54,11 @@ POWER_CODE_NAMES: Final = {
 # occasional refused connection is normal rather than a real outage.
 MAX_CONSECUTIVE_FAILURES: Final = 3
 
-# A projector that answers but refuses to report its power state is reachable,
-# just busy -- it does this throughout warm-up and cool-down. Tolerate that for
-# longer than an unreachable bridge, so the entities do not drop out mid
-# transition, while a projector stuck refusing forever still surfaces.
-MAX_CONSECUTIVE_REFUSALS: Final = 12
+# A projector that takes the connection but will not answer usefully -- a quiet
+# serial port, a refused PWR?, a truncated reply -- is reachable, just busy. It
+# does all of this during warm-up and cool-down, so tolerate it for longer than
+# an unreachable bridge, while one stuck like that forever still surfaces.
+MAX_CONSECUTIVE_BUSY_POLLS: Final = 12
 
 # After a power command the serial port goes briefly unresponsive and the
 # projector may still report its previous state. Trust the commanded state for

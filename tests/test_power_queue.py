@@ -183,7 +183,7 @@ async def test_unreachable_projector_fails_immediately(
     hass: HomeAssistant, setup_integration: MockConfigEntry, projector: FakeProjector
 ) -> None:
     """An unreachable bridge fails fast instead of waiting out the timeout."""
-    projector.mode = "offline"
+    await projector.pause()  # genuinely unreachable
 
     with pytest.raises(HomeAssistantError):
         await _turn(hass, False)
@@ -276,7 +276,7 @@ async def test_only_an_unreachable_bridge_fails_without_waiting(
     Patching the timeout down to nothing proves the call does not reach the
     waiting path at all: there is nothing to wait for.
     """
-    projector.mode = "offline"
+    await projector.pause()  # genuinely unreachable
 
     # A generous timeout proves the call never reaches the waiting path.
     setup_integration.runtime_data.transition_timeout = timedelta(hours=1)
@@ -285,3 +285,22 @@ async def test_only_an_unreachable_bridge_fails_without_waiting(
         await _turn(hass, True)
 
     assert caught.value.translation_key == "cannot_connect"
+
+
+async def test_quiet_serial_port_is_waited_out(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, projector: FakeProjector
+) -> None:
+    """A projector that takes the connection but never sends its ready prompt.
+
+    This is the reported failure: the bridge accepts the connection, so it is
+    reachable, but the serial port is quiet and no prompt arrives. That is what
+    it does at the start of a transition, and it must not fail an automation.
+    """
+    projector.power = "01"
+    projector.silent_connections = 5
+    projector.commands.clear()
+
+    await _turn(hass, False)
+
+    assert b"PWR OFF" in projector.commands
+    assert hass.states.get(SWITCH_ENTITY).state == STATE_OFF

@@ -54,10 +54,11 @@ Instead, a power command:
    refuses commands for a moment either side of a transition, and can slip into
    one between the read and the command.
 
-A refusal is never reported as a failure — not of the command, and not of the
-`PWR?` query, which the projector also refuses while busy. The only thing that
-fails fast is an unreachable bridge, because that is the only case with nothing
-to wait for. A projector that never becomes ready fails on the 3-minute
+Nothing about a busy projector is reported as a failure. Not a refused command,
+not a refused `PWR?` query, and not a silent serial port that never sends its
+ready prompt — the projector does all three while transitioning. The only thing
+that fails fast is a bridge that will not accept a connection at all, because
+that is the only case with nothing to wait for. A projector that never becomes ready fails on the 3-minute
 deadline, which is a backstop rather than an expected outcome.
 
 Commands are serialised, so a second one queues behind the first rather than
@@ -166,18 +167,20 @@ automation or script sees a proper failure rather than a silent no-op:
 
 | Condition | Message |
 | --- | --- |
-| Bridge unreachable, or no ready prompt | Could not reach the projector at … |
+| Bridge refuses the connection | Could not reach the projector at … |
 | Never became ready within the timeout | … was not ready to accept the power command in time |
 | Anything else on the command path | Power command … failed |
 
-There is deliberately no error for "the projector refused". A refusal means it
-is busy, which is waited out rather than reported.
+There is deliberately no error for a projector that refused, went quiet, or was
+mid-transition. Those all mean "busy", which is waited out rather than reported.
 
-Failed polls are reported through the coordinator instead, which marks the
-entities unavailable rather than raising at a caller. A projector that refuses
-`PWR?` is tolerated for longer than an unreachable one — it is demonstrably
-there, and it does this throughout a transition — so the entities keep their
-last known state instead of dropping out mid warm-up.
+Failed polls go through the coordinator instead, which marks the entities
+unavailable rather than raising at a caller — and it draws the same distinction.
+A bridge that cannot be connected to is tolerated for a few polls; a projector
+that takes the connection without answering usefully is tolerated for much
+longer, since it is demonstrably there and does exactly that throughout a
+transition. So the entities keep their last known state instead of dropping out
+mid warm-up.
 
 ## Troubleshooting
 

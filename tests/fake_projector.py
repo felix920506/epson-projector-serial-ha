@@ -14,8 +14,14 @@ class FakeProjector:
     def __init__(self, power: str = "01") -> None:
         """Initialise the fake projector in the given power state."""
         self.power = power
-        # "normal", "offline", "no_prompt", "err", "silent_ack" or "dribble".
+        # "normal", "drop", "no_prompt", "err", "silent_ack" or "dribble".
+        # Note none of these are "unreachable": they all accept the connection.
+        # Use pause() for a bridge that cannot be connected to at all.
         self.mode = "normal"
+        # How many of the next connections to accept and drop without a prompt,
+        # whatever the mode. Models the serial port going quiet, which it does
+        # at the start of a transition.
+        self.silent_connections = 0
         self.commands: list[bytes] = []
         # How many PWR? reads report a transitional code before it settles.
         # None holds the transition open indefinitely.
@@ -45,18 +51,36 @@ class FakeProjector:
         return self.port
 
     async def stop(self) -> None:
-        """Stop listening."""
+        """Stop listening for good."""
+        await self.pause()
+
+    async def pause(self) -> None:
+        """Refuse connections outright, keeping the port for resume().
+
+        This is the only genuinely unreachable state: the other modes all
+        accept the connection and then misbehave.
+        """
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
             self._server = None
+
+    async def resume(self) -> None:
+        """Start accepting connections again on the same port."""
+        if self._server is None:
+            self._server = await asyncio.start_server(
+                self._handle, "127.0.0.1", self.port
+            )
 
     async def _handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         """Handle one ESC/VP21 session."""
         try:
-            if self.mode == "offline":
+            if self.silent_connections > 0:
+                self.silent_connections -= 1
+                return
+            if self.mode == "drop":
                 return
             if self.mode == "no_prompt":
                 # Hold the connection open, silently, for longer than the

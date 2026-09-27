@@ -60,7 +60,25 @@ class EpsonError(Exception):
 
 
 class EpsonConnectionError(EpsonError):
-    """The bridge could not be reached or did not offer a ready prompt."""
+    """The exchange failed at the transport level."""
+
+
+class EpsonUnreachableError(EpsonConnectionError):
+    """No connection to the bridge could be opened at all.
+
+    The one failure with nothing to wait for: a wrong address, a bridge that is
+    powered off, a network that is down. Distinct from a projector that accepts
+    the connection and then says nothing, which is what it does while busy.
+    """
+
+
+class EpsonNotReadyError(EpsonConnectionError):
+    """Connected, but the projector never got as far as a usable exchange.
+
+    The serial port goes quiet at the start of a transition: the connection is
+    accepted and then the ready prompt never arrives, or the exchange dies
+    part-way. The projector is plainly there, so this is worth waiting out.
+    """
 
 
 class EpsonCommandError(EpsonError):
@@ -157,7 +175,7 @@ class EpsonSerialBridge:
                 asyncio.open_connection(self._host, self._port), CONNECT_TIMEOUT
             )
         except (OSError, TimeoutError) as err:
-            raise EpsonConnectionError(
+            raise EpsonUnreachableError(
                 f"Cannot connect to {self.target}: {err}"
             ) from err
 
@@ -167,7 +185,7 @@ class EpsonSerialBridge:
 
             _, ready = await self._async_read(reader, _prompt_received, PROMPT_TIMEOUT)
             if not ready:
-                raise EpsonConnectionError(
+                raise EpsonNotReadyError(
                     f"No ready prompt from {self.target} within {PROMPT_TIMEOUT}s"
                 )
 
@@ -178,7 +196,7 @@ class EpsonSerialBridge:
                 reader, matcher or _prompt_received, read_timeout
             )
         except OSError as err:
-            raise EpsonConnectionError(
+            raise EpsonNotReadyError(
                 f"Lost {self.target} mid-command: {err}"
             ) from err
         finally:

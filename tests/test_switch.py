@@ -144,7 +144,7 @@ async def test_failed_command_leaves_the_state_alone(
     here is that a failure is not reported as a state change.
     """
     assert hass.states.get(ENTITY_ID).state == STATE_ON
-    projector.mode = "offline"
+    await projector.pause()  # genuinely unreachable
 
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(
@@ -162,7 +162,7 @@ async def test_busy_bridge_keeps_state_then_goes_unavailable(
     """Short outages keep the last state; a sustained one marks it unavailable."""
     assert hass.states.get(ENTITY_ID).state == STATE_ON
 
-    projector.mode = "offline"
+    await projector.pause()  # genuinely unreachable
     await _poll(hass, setup_integration)
     assert hass.states.get(ENTITY_ID).state == STATE_ON
     await _poll(hass, setup_integration)
@@ -170,7 +170,7 @@ async def test_busy_bridge_keeps_state_then_goes_unavailable(
     await _poll(hass, setup_integration)
     assert hass.states.get(ENTITY_ID).state == STATE_UNAVAILABLE
 
-    projector.mode = "normal"
+    await projector.resume()
     await _poll(hass, setup_integration)
     assert hass.states.get(ENTITY_ID).state == STATE_ON
 
@@ -179,7 +179,7 @@ async def test_setup_retries_when_projector_is_unreachable(
     hass: HomeAssistant, projector: FakeProjector, config_entry: MockConfigEntry
 ) -> None:
     """Setup fails cleanly, so Home Assistant retries later."""
-    projector.mode = "offline"
+    await projector.pause()  # genuinely unreachable
     config_entry.add_to_hass(hass)
     assert not await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
@@ -206,3 +206,26 @@ async def test_unload(
     assert await hass.config_entries.async_unload(setup_integration.entry_id)
     await hass.async_block_till_done()
     assert setup_integration.state is ConfigEntryState.NOT_LOADED
+
+
+async def test_quiet_serial_port_does_not_drop_the_entities(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    projector: FakeProjector,
+) -> None:
+    """A projector that takes the connection but says nothing keeps its state.
+
+    The serial port goes quiet at the start of a transition. That is not an
+    outage, and it lasts longer than the few polls an unreachable bridge is
+    given, so it must not drop the entities out mid warm-up.
+    """
+    assert hass.states.get(ENTITY_ID).state == STATE_ON
+
+    # More silent connections than the unreachable allowance would tolerate.
+    projector.silent_connections = 6
+    for _ in range(6):
+        await _poll(hass, setup_integration)
+        assert hass.states.get(ENTITY_ID).state == STATE_ON
+
+    await _poll(hass, setup_integration)
+    assert hass.states.get(ENTITY_ID).state == STATE_ON

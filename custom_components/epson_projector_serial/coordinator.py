@@ -15,8 +15,8 @@ from homeassistant.util import dt as dt_util
 from .const import (
     COMMAND_GRACE_PERIOD,
     DOMAIN,
+    MAX_CONSECUTIVE_BUSY_POLLS,
     MAX_CONSECUTIVE_FAILURES,
-    MAX_CONSECUTIVE_REFUSALS,
     POWER_CODE_NAMES,
     POWER_ON_CODES,
     TRANSITION_POLL_INTERVAL,
@@ -26,8 +26,8 @@ from .const import (
 from .protocol import (
     EpsonConnectionError,
     EpsonError,
-    EpsonRefusedError,
     EpsonSerialBridge,
+    EpsonUnreachableError,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,6 +48,7 @@ class EpsonBusyError(EpsonError):
 # exception's MRO, so a subclass inherits its parent's message.
 ERROR_TRANSLATION_KEYS: dict[type[EpsonError], str] = {
     EpsonBusyError: "projector_busy",
+    EpsonUnreachableError: "cannot_connect",
     EpsonConnectionError: "cannot_connect",
 }
 DEFAULT_ERROR_TRANSLATION_KEY = "command_failed"
@@ -87,7 +88,7 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
         self.power_code: str | None = None
         self.pending_command: bool | None = None
         self._failures = 0
-        self._refusals = 0
+        self._busy_polls = 0
         self._command_lock = asyncio.Lock()
         self._commanded_state: bool | None = None
         self._grace_until: datetime | None = None
@@ -96,41 +97,41 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
         """Read the projector's power state."""
         try:
             code = await self.bridge.async_query_power()
-        except EpsonRefusedError as err:
-            # The projector answered, it just would not say what state it is
-            # in, which is what it does throughout a transition. It is plainly
-            # reachable, so tolerate this for longer than a dead bridge.
-            self._refusals += 1
-            if self.data is not None and self._refusals < MAX_CONSECUTIVE_REFUSALS:
+        except EpsonUnreachableError as err:
+            # No connection at all. Keep the last state briefly anyway, since
+            # the bridge takes one connection at a time and may be occupied.
+            self._failures += 1
+            if self.data is not None and self._failures < MAX_CONSECUTIVE_FAILURES:
                 _LOGGER.debug(
-                    "Poll %s/%s of %s refused, keeping last state: %s",
-                    self._refusals,
-                    MAX_CONSECUTIVE_REFUSALS,
+                    "Poll %s/%s could not connect to %s, keeping last state: %s",
+                    self._failures,
+                    MAX_CONSECUTIVE_FAILURES,
+                    self.bridge.target,
+                    err,
+                )
+                return self.data
+            raise UpdateFailed(f"Cannot reach {self.bridge.target}: {err}") from err
+        except EpsonError as err:
+            # Reachable but not talking: a quiet serial port, a refused PWR?, a
+            # truncated reply. The projector does all of this during a
+            # transition, so tolerate it for much longer than a dead bridge --
+            # otherwise the entities drop out partway through every warm-up.
+            self._busy_polls += 1
+            if self.data is not None and self._busy_polls < MAX_CONSECUTIVE_BUSY_POLLS:
+                _LOGGER.debug(
+                    "Poll %s/%s of %s got no usable answer, keeping last state: %s",
+                    self._busy_polls,
+                    MAX_CONSECUTIVE_BUSY_POLLS,
                     self.bridge.target,
                     err,
                 )
                 return self.data
             raise UpdateFailed(
-                f"{self.bridge.target} keeps refusing PWR?: {err}"
+                f"{self.bridge.target} is not answering usefully: {err}"
             ) from err
-        except EpsonError as err:
-            self._failures += 1
-            # A busy bridge looks exactly like an unreachable one, so keep the
-            # last known state for a few polls instead of flipping the switch.
-            if self.data is not None and self._failures < MAX_CONSECUTIVE_FAILURES:
-                _LOGGER.debug(
-                    "Poll %s/%s of %s failed, keeping last state: %s",
-                    self._failures,
-                    MAX_CONSECUTIVE_FAILURES,
-    MAX_CONSECUTIVE_REFUSALS,
-                    self.bridge.target,
-                    err,
-                )
-                return self.data
-            raise UpdateFailed(f"Error polling {self.bridge.target}: {err}") from err
 
         self._failures = 0
-        self._refusals = 0
+        self._busy_polls = 0
         self.power_code = code
         is_on = code in POWER_ON_CODES
 
@@ -201,8 +202,8 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
         while True:
             try:
                 code = await self.bridge.async_query_power()
-            except EpsonConnectionError:
-                # Nothing to wait for: the projector cannot be reached.
+            except EpsonUnreachableError:
+                # Nothing to wait for: no connection to the bridge at all.
                 raise
             except EpsonError as err:
                 # Reachable, but it will not say what state it is in. It does
@@ -242,7 +243,7 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
 
             try:
                 await self.bridge.async_set_power(power_on)
-            except EpsonConnectionError:
+            except EpsonUnreachableError:
                 raise
             except EpsonError as err:
                 # Refused. The state we read said this should be accepted, so
@@ -258,7 +259,7 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
             break
 
         self._failures = 0
-        self._refusals = 0
+        self._busy_polls = 0
         self._commanded_state = power_on
         self._grace_until = dt_util.utcnow() + COMMAND_GRACE_PERIOD
         self.async_set_updated_data(power_on)
