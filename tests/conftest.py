@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
+from unittest.mock import patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -11,12 +12,24 @@ from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
 from homeassistant.core import HomeAssistant
 
 from .fake_projector import FakeProjector
+from custom_components.epson_projector_serial import coordinator
 from custom_components.epson_projector_serial.const import DOMAIN
 
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
     """Let Home Assistant load the integration from custom_components."""
+
+
+@pytest.fixture(autouse=True)
+def fast_transition_polling() -> Generator[None]:
+    """Shrink the wait between transition re-reads so tests do not crawl.
+
+    These are real sleeps -- see the note on _poll about the frozen clock --
+    so the production 3s interval would dominate the suite.
+    """
+    with patch.object(coordinator, "TRANSITION_POLL_INTERVAL", 0.02):
+        yield
 
 
 @pytest.fixture

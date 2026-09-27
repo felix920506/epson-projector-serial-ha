@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 
@@ -13,14 +14,29 @@ from homeassistant.util import dt as dt_util
 from .const import (
     COMMAND_GRACE_PERIOD,
     DOMAIN,
+    MAX_COMMAND_REJECTIONS,
     MAX_CONSECUTIVE_FAILURES,
+    POWER_CODE_NAMES,
     POWER_ON_CODES,
+    TRANSITION_POLL_INTERVAL,
+    TRANSITION_TARGETS,
+    TRANSITION_TIMEOUT,
+    TRANSITIONAL_POWER_CODES,
 )
-from .protocol import EpsonError, EpsonSerialBridge
+from .protocol import EpsonCommandError, EpsonError, EpsonSerialBridge
 
 _LOGGER = logging.getLogger(__name__)
 
 type EpsonConfigEntry = ConfigEntry[EpsonProjectorCoordinator]
+
+
+class EpsonBusyError(EpsonError):
+    """The projector stayed in warm-up or cool-down for too long.
+
+    This lives here rather than in protocol.py because it is a policy decision
+    about how long to wait, not something the wire protocol reports. It
+    subclasses EpsonError so callers keep a single except clause.
+    """
 
 
 class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
@@ -45,7 +61,9 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
         )
         self.bridge = bridge
         self.power_code: str | None = None
+        self.pending_command: bool | None = None
         self._failures = 0
+        self._command_lock = asyncio.Lock()
         self._commanded_state: bool | None = None
         self._grace_until: datetime | None = None
 
@@ -85,13 +103,117 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
         self._clear_grace_period()
         return is_on
 
+    @property
+    def power_status(self) -> str | None:
+        """Human-readable name for the current power code."""
+        if self.power_code is None:
+            return None
+        return POWER_CODE_NAMES.get(self.power_code)
+
     async def async_set_power(self, power_on: bool) -> None:
-        """Send a power command and assume it took effect."""
-        await self.bridge.async_set_power(power_on)
+        """Set the projector's power, waiting out any transition first.
+
+        The projector rejects PWR ON/OFF while it is warming up or cooling
+        down. Rather than failing the call -- and with it whatever automation
+        made it -- wait for the transition to finish and then send the command.
+
+        Calls are serialised, so a second command queues behind the first
+        instead of racing it.
+        """
+        async with self._command_lock:
+            self.pending_command = power_on
+            self.async_update_listeners()
+            try:
+                await self._async_apply_power(power_on)
+            finally:
+                self.pending_command = None
+                self.async_update_listeners()
+
+    async def _async_apply_power(self, power_on: bool) -> None:
+        """Read the projector, wait out any transition, then command it."""
+        deadline = dt_util.utcnow() + TRANSITION_TIMEOUT
+        reads = 0
+        read_failures = 0
+        rejections = 0
+
+        while True:
+            reads += 1
+            try:
+                code = await self.bridge.async_query_power()
+            except EpsonError:
+                read_failures += 1
+                # The first read is what tells us whether the projector is
+                # reachable at all, so fail fast on it rather than making an
+                # automation wait out the whole timeout.
+                if reads == 1 or read_failures >= MAX_CONSECUTIVE_FAILURES:
+                    raise
+                _LOGGER.debug(
+                    "Read %s of %s failed while waiting out a transition",
+                    read_failures,
+                    self.bridge.target,
+                )
+                await self._async_wait_to_retry(deadline)
+                continue
+
+            read_failures = 0
+            self.power_code = code
+
+            if code in TRANSITIONAL_POWER_CODES:
+                if TRANSITION_TARGETS[code] == power_on:
+                    _LOGGER.debug(
+                        "PWR=%s is already heading to %s; no command needed",
+                        code,
+                        "on" if power_on else "off",
+                    )
+                    break
+                # There is a real reason to keep waiting, so past refusals
+                # stop counting against us.
+                rejections = 0
+                _LOGGER.debug(
+                    "Waiting out PWR=%s before turning %s",
+                    code,
+                    "on" if power_on else "off",
+                )
+                await self._async_wait_to_retry(deadline)
+                continue
+
+            if (code in POWER_ON_CODES) == power_on:
+                _LOGGER.debug(
+                    "Projector is already %s (PWR=%s)",
+                    "on" if power_on else "off",
+                    code,
+                )
+                break
+
+            try:
+                await self.bridge.async_set_power(power_on)
+            except EpsonCommandError as err:
+                # Most likely the projector slipped into a transition between
+                # the read and the command. Look again and wait it out -- but
+                # a projector that keeps refusing from a settled state is not
+                # going to start accepting, so do not sit out the timeout.
+                rejections += 1
+                if rejections >= MAX_COMMAND_REJECTIONS:
+                    raise
+                _LOGGER.debug("Power command refused, looking again: %s", err)
+                await self._async_wait_to_retry(deadline)
+                continue
+
+            break
+
         self._failures = 0
         self._commanded_state = power_on
         self._grace_until = dt_util.utcnow() + COMMAND_GRACE_PERIOD
         self.async_set_updated_data(power_on)
+
+    async def _async_wait_to_retry(self, deadline: datetime) -> None:
+        """Pause before looking at the projector again, or give up."""
+        if dt_util.utcnow() >= deadline:
+            raise EpsonBusyError(
+                f"{self.bridge.target} did not settle within "
+                f"{TRANSITION_TIMEOUT.total_seconds():.0f}s"
+            )
+        await asyncio.sleep(TRANSITION_POLL_INTERVAL)
 
     def _in_grace_period(self) -> bool:
         """Return True while a recent power command is still being trusted."""
