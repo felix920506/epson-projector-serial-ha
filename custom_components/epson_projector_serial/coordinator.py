@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -22,7 +23,12 @@ from .const import (
     TRANSITION_TIMEOUT,
     TRANSITIONAL_POWER_CODES,
 )
-from .protocol import EpsonError, EpsonRefusedError, EpsonSerialBridge
+from .protocol import (
+    EpsonConnectionError,
+    EpsonError,
+    EpsonRefusedError,
+    EpsonSerialBridge,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,6 +42,24 @@ class EpsonBusyError(EpsonError):
     about how long to wait, not something the wire protocol reports. It
     subclasses EpsonError so callers keep a single except clause.
     """
+
+
+# Which translated message explains each failure. Looked up along the
+# exception's MRO, so a subclass inherits its parent's message.
+ERROR_TRANSLATION_KEYS: dict[type[EpsonError], str] = {
+    EpsonBusyError: "projector_busy",
+    EpsonRefusedError: "command_refused",
+    EpsonConnectionError: "cannot_connect",
+}
+DEFAULT_ERROR_TRANSLATION_KEY = "command_failed"
+
+
+def _translation_key(err: EpsonError) -> str:
+    """Return the translation key that best describes this failure."""
+    for cls in type(err).__mro__:
+        if cls in ERROR_TRANSLATION_KEYS:
+            return ERROR_TRANSLATION_KEYS[cls]
+    return DEFAULT_ERROR_TRANSLATION_KEY
 
 
 class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
@@ -118,12 +142,26 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
 
         Calls are serialised, so a second command queues behind the first
         instead of racing it.
+
+        Failures are raised as HomeAssistantError with a translated message, so
+        every caller gets something Home Assistant can report properly. Errors
+        we do not anticipate are left alone: they are bugs, and swallowing the
+        traceback would only hide them.
         """
         async with self._command_lock:
             self.pending_command = power_on
             self.async_update_listeners()
             try:
                 await self._async_apply_power(power_on)
+            except EpsonError as err:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key=_translation_key(err),
+                    translation_placeholders={
+                        "bridge": self.bridge.target,
+                        "error": str(err),
+                    },
+                ) from err
             finally:
                 self.pending_command = None
                 self.async_update_listeners()

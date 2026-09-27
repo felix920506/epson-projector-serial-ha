@@ -151,6 +151,21 @@ A few details worth knowing:
 | `04` | Standby, network on | off |
 | `05` | Abnormal standby | off |
 
+## Errors
+
+Failures surface as Home Assistant errors with translated messages, so an
+automation or script sees a proper failure rather than a silent no-op:
+
+| Condition | Message |
+| --- | --- |
+| Bridge unreachable, or no ready prompt | Could not reach the projector at … |
+| Still transitioning after 3 minutes | … did not finish warming up or cooling down in time |
+| Refused from a settled state | … refused the power command |
+| Anything else on the command path | Power command … failed |
+
+Failed polls are reported through the coordinator instead, which marks the
+entities unavailable rather than raising at a caller.
+
 ## Troubleshooting
 
 **Setup fails with "could not reach the bridge"** — check that the host and

@@ -70,5 +70,19 @@
         "name": "Power code"
       }
     }
+  },
+  "exceptions": {
+    "cannot_connect": {
+      "message": "Could not reach the projector at {bridge}: {error}"
+    },
+    "projector_busy": {
+      "message": "The projector at {bridge} did not finish warming up or cooling down in time, so the power command was not sent: {error}"
+    },
+    "command_refused": {
+      "message": "The projector at {bridge} refused the power command: {error}"
+    },
+    "command_failed": {
+      "message": "Power command to the projector at {bridge} failed: {error}"
+    }
   }
 }

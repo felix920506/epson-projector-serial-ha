@@ -6,12 +6,10 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import EpsonConfigEntry, EpsonProjectorCoordinator
 from .entity import EpsonProjectorEntity
-from .protocol import EpsonError
 
 # The bridge takes one connection at a time; never overlap service calls.
 PARALLEL_UPDATES = 1
@@ -58,18 +56,13 @@ class EpsonProjectorSwitch(EpsonProjectorEntity, SwitchEntity):
         }
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn the projector on."""
-        await self._async_set_power(True)
+        """Turn the projector on.
+
+        Waits out warm-up or cool-down first, and raises HomeAssistantError if
+        the command cannot be delivered -- see the coordinator.
+        """
+        await self.coordinator.async_set_power(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the projector off."""
-        await self._async_set_power(False)
-
-    async def _async_set_power(self, power_on: bool) -> None:
-        """Send the power command, surfacing failures to the caller."""
-        try:
-            await self.coordinator.async_set_power(power_on)
-        except EpsonError as err:
-            raise HomeAssistantError(
-                f"Failed to send power command to {self._bridge_target}: {err}"
-            ) from err
+        await self.coordinator.async_set_power(False)
