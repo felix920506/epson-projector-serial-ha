@@ -50,12 +50,15 @@ Instead, a power command:
 3. If it is mid-transition **away from it**, waits, re-reading every 3 s, until
    the projector settles, then sends the command.
 4. If it is already in the requested state, sends nothing.
-5. If the command is refused anyway, **reads the state again rather than
-   repeating the command**. The projector can slip into a transition between
-   the read and the command, and the second read reveals it. If the state is
-   settled both times, the refusal is taken at its word and reported — a
-   projector in `abnormal standby` fails immediately instead of being asked
-   again.
+5. If the command is refused anyway, waits and asks again. The projector
+   refuses commands for a moment either side of a transition, and can slip into
+   one between the read and the command.
+
+A refusal is never reported as a failure — not of the command, and not of the
+`PWR?` query, which the projector also refuses while busy. The only thing that
+fails fast is an unreachable bridge, because that is the only case with nothing
+to wait for. A projector that never becomes ready fails on the 3-minute
+deadline, which is a backstop rather than an expected outcome.
 
 Commands are serialised, so a second one queues behind the first rather than
 racing it. `switch.turn_on` called during a cool-down therefore blocks until
@@ -159,12 +162,17 @@ automation or script sees a proper failure rather than a silent no-op:
 | Condition | Message |
 | --- | --- |
 | Bridge unreachable, or no ready prompt | Could not reach the projector at … |
-| Still transitioning after 3 minutes | … did not finish warming up or cooling down in time |
-| Refused from a settled state | … refused the power command |
+| Never became ready within 3 minutes | … was not ready to accept the power command in time |
 | Anything else on the command path | Power command … failed |
 
+There is deliberately no error for "the projector refused". A refusal means it
+is busy, which is waited out rather than reported.
+
 Failed polls are reported through the coordinator instead, which marks the
-entities unavailable rather than raising at a caller.
+entities unavailable rather than raising at a caller. A projector that refuses
+`PWR?` is tolerated for longer than an unreachable one — it is demonstrably
+there, and it does this throughout a transition — so the entities keep their
+last known state instead of dropping out mid warm-up.
 
 ## Troubleshooting
 

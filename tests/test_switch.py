@@ -135,15 +135,23 @@ async def test_stale_reading_held_during_grace_period(
     assert hass.states.get(ENTITY_ID).state == STATE_OFF
 
 
-async def test_command_failure_is_reported(
+async def test_failed_command_leaves_the_state_alone(
     hass: HomeAssistant, setup_integration: MockConfigEntry, projector: FakeProjector
 ) -> None:
-    """A rejected command raises instead of silently doing nothing."""
-    projector.mode = "err"
+    """A command that could not be delivered does not move the switch.
+
+    Waiting out a busy projector is tested in test_power_queue; what matters
+    here is that a failure is not reported as a state change.
+    """
+    assert hass.states.get(ENTITY_ID).state == STATE_ON
+    projector.mode = "offline"
+
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(
-            SWITCH_DOMAIN, SERVICE_TURN_ON, {ATTR_ENTITY_ID: ENTITY_ID}, blocking=True
+            SWITCH_DOMAIN, SERVICE_TURN_OFF, {ATTR_ENTITY_ID: ENTITY_ID}, blocking=True
         )
+
+    assert hass.states.get(ENTITY_ID).state == STATE_ON
 
 
 async def test_busy_bridge_keeps_state_then_goes_unavailable(

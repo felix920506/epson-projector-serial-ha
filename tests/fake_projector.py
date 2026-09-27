@@ -27,6 +27,9 @@ class FakeProjector:
         # race: the projector refuses because it has just begun transitioning,
         # which the preceding read was too early to see.
         self.power_after_rejection: str | None = None
+        # How many of the next PWR? queries to refuse. Real projectors do this
+        # during a transition: the state cannot be read either.
+        self.reject_queries = 0
         self._server: asyncio.Server | None = None
         self.port = 0
 
@@ -78,8 +81,12 @@ class FakeProjector:
             if self.mode == "err":
                 await self._send(writer, b"ERR\r:")
             elif command == b"PWR?":
-                await self._send(writer, b"PWR=" + self.power.encode() + b"\r:")
-                self._advance_transition()
+                if self.reject_queries > 0:
+                    self.reject_queries -= 1
+                    await self._send(writer, b"ERR\r:")
+                else:
+                    await self._send(writer, b"PWR=" + self.power.encode() + b"\r:")
+                    self._advance_transition()
             elif command in (b"PWR ON", b"PWR OFF"):
                 if self.reject_commands > 0:
                     self.reject_commands -= 1

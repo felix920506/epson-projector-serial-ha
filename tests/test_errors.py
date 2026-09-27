@@ -50,19 +50,28 @@ async def test_unreachable_bridge_raises_translated_error(
     )
 
 
-async def test_refusal_raises_translated_error(
+async def test_projector_that_never_accepts_reports_busy(
     hass: HomeAssistant, setup_integration: MockConfigEntry, projector: FakeProjector
 ) -> None:
-    """A projector that refuses from a settled state reports command_refused."""
+    """A projector that keeps refusing reports projector_busy, not a refusal.
+
+    A refusal on its own is not an error -- it is waited out -- so the only
+    thing left to report is that it never became ready.
+    """
     projector.power = "05"
     projector.transition_reads = None
     projector.reject_commands = 99
 
-    with pytest.raises(HomeAssistantError) as caught:
+    with (
+        patch.object(
+            coordinator_module, "TRANSITION_TIMEOUT", timedelta(milliseconds=200)
+        ),
+        pytest.raises(HomeAssistantError) as caught,
+    ):
         await _turn_on(hass)
 
     assert caught.value.translation_domain == DOMAIN
-    assert caught.value.translation_key == "command_refused"
+    assert caught.value.translation_key == "projector_busy"
 
 
 async def test_stuck_transition_raises_translated_error(

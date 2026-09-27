@@ -16,6 +16,7 @@ from .const import (
     COMMAND_GRACE_PERIOD,
     DOMAIN,
     MAX_CONSECUTIVE_FAILURES,
+    MAX_CONSECUTIVE_REFUSALS,
     POWER_CODE_NAMES,
     POWER_ON_CODES,
     TRANSITION_POLL_INTERVAL,
@@ -48,7 +49,6 @@ class EpsonBusyError(EpsonError):
 # exception's MRO, so a subclass inherits its parent's message.
 ERROR_TRANSLATION_KEYS: dict[type[EpsonError], str] = {
     EpsonBusyError: "projector_busy",
-    EpsonRefusedError: "command_refused",
     EpsonConnectionError: "cannot_connect",
 }
 DEFAULT_ERROR_TRANSLATION_KEY = "command_failed"
@@ -86,6 +86,7 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
         self.power_code: str | None = None
         self.pending_command: bool | None = None
         self._failures = 0
+        self._refusals = 0
         self._command_lock = asyncio.Lock()
         self._commanded_state: bool | None = None
         self._grace_until: datetime | None = None
@@ -94,6 +95,23 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
         """Read the projector's power state."""
         try:
             code = await self.bridge.async_query_power()
+        except EpsonRefusedError as err:
+            # The projector answered, it just would not say what state it is
+            # in, which is what it does throughout a transition. It is plainly
+            # reachable, so tolerate this for longer than a dead bridge.
+            self._refusals += 1
+            if self.data is not None and self._refusals < MAX_CONSECUTIVE_REFUSALS:
+                _LOGGER.debug(
+                    "Poll %s/%s of %s refused, keeping last state: %s",
+                    self._refusals,
+                    MAX_CONSECUTIVE_REFUSALS,
+                    self.bridge.target,
+                    err,
+                )
+                return self.data
+            raise UpdateFailed(
+                f"{self.bridge.target} keeps refusing PWR?: {err}"
+            ) from err
         except EpsonError as err:
             self._failures += 1
             # A busy bridge looks exactly like an unreachable one, so keep the
@@ -103,6 +121,7 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
                     "Poll %s/%s of %s failed, keeping last state: %s",
                     self._failures,
                     MAX_CONSECUTIVE_FAILURES,
+    MAX_CONSECUTIVE_REFUSALS,
                     self.bridge.target,
                     err,
                 )
@@ -110,6 +129,7 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
             raise UpdateFailed(f"Error polling {self.bridge.target}: {err}") from err
 
         self._failures = 0
+        self._refusals = 0
         self.power_code = code
         is_on = code in POWER_ON_CODES
 
@@ -167,32 +187,32 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
                 self.async_update_listeners()
 
     async def _async_apply_power(self, power_on: bool) -> None:
-        """Read the projector, wait out any transition, then command it."""
+        """Wait until the projector will accept the command, then send it.
+
+        Only an unreachable bridge fails fast. Everything else -- a refused
+        query, a refused command, a transition in progress -- means the
+        projector is there but not ready, so it is waited out. A projector that
+        never becomes ready fails on the deadline, which is a backstop rather
+        than an expected outcome.
+        """
         deadline = dt_util.utcnow() + TRANSITION_TIMEOUT
-        reads = 0
-        read_failures = 0
-        refusal: EpsonRefusedError | None = None
 
         while True:
-            reads += 1
             try:
                 code = await self.bridge.async_query_power()
-            except EpsonError:
-                read_failures += 1
-                # The first read is what tells us whether the projector is
-                # reachable at all, so fail fast on it rather than making an
-                # automation wait out the whole timeout.
-                if reads == 1 or read_failures >= MAX_CONSECUTIVE_FAILURES:
-                    raise
+            except EpsonConnectionError:
+                # Nothing to wait for: the projector cannot be reached.
+                raise
+            except EpsonError as err:
+                # Reachable, but it will not say what state it is in. It does
+                # this while busy -- a transition refuses PWR? as well as
+                # PWR ON/OFF -- so ask again shortly.
                 _LOGGER.debug(
-                    "Read %s of %s failed while waiting out a transition",
-                    read_failures,
-                    self.bridge.target,
+                    "%s would not report its state: %s", self.bridge.target, err
                 )
-                await self._async_wait_to_retry(deadline)
+                await self._async_wait_to_retry(deadline, str(err))
                 continue
 
-            read_failures = 0
             self.power_code = code
 
             if code in TRANSITIONAL_POWER_CODES:
@@ -203,15 +223,12 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
                         "on" if power_on else "off",
                     )
                     break
-                # A transition explains a refusal, and gives us something to
-                # wait for, so an earlier one stops being final.
-                refusal = None
                 _LOGGER.debug(
                     "Waiting out PWR=%s before turning %s",
                     code,
                     "on" if power_on else "off",
                 )
-                await self._async_wait_to_retry(deadline)
+                await self._async_wait_to_retry(deadline, f"PWR={code}")
                 continue
 
             if (code in POWER_ON_CODES) == power_on:
@@ -222,40 +239,36 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
                 )
                 break
 
-            if refusal is not None:
-                # It refused, and this read says it is settled, so there is
-                # nothing to wait for and no reason to expect a different
-                # answer. Send the refusal on rather than asking again.
-                raise refusal
-
             try:
                 await self.bridge.async_set_power(power_on)
-            except EpsonRefusedError as err:
-                # The state we read says this should have been accepted, so the
-                # projector knows something we do not -- most likely it entered
-                # a transition between the read and the command. Read it again
-                # rather than repeating a command it has already declined. The
-                # pause matters: the serial port lags at the start of a
-                # transition, so an immediate re-read can still show the old
-                # state.
-                _LOGGER.debug("Power command refused, re-reading state: %s", err)
-                refusal = err
-                await self._async_wait_to_retry(deadline)
+            except EpsonConnectionError:
+                raise
+            except EpsonError as err:
+                # Refused. The state we read said this should be accepted, so
+                # the projector knows something we do not -- it can slip into a
+                # transition between the read and the command, and it refuses
+                # commands for a moment either side of one. Wait and look
+                # again rather than failing a caller who only asked for the
+                # state the projector is going to reach anyway.
+                _LOGGER.debug("Power command refused, will look again: %s", err)
+                await self._async_wait_to_retry(deadline, str(err))
                 continue
 
             break
 
         self._failures = 0
+        self._refusals = 0
         self._commanded_state = power_on
         self._grace_until = dt_util.utcnow() + COMMAND_GRACE_PERIOD
         self.async_set_updated_data(power_on)
 
-    async def _async_wait_to_retry(self, deadline: datetime) -> None:
+    async def _async_wait_to_retry(self, deadline: datetime, reason: str) -> None:
         """Pause before looking at the projector again, or give up."""
         if dt_util.utcnow() >= deadline:
             raise EpsonBusyError(
-                f"{self.bridge.target} did not settle within "
-                f"{TRANSITION_TIMEOUT.total_seconds():.0f}s"
+                f"{self.bridge.target} was still not ready to accept the "
+                f"command after {TRANSITION_TIMEOUT.total_seconds():.0f}s "
+                f"({reason})"
             )
         await asyncio.sleep(TRANSITION_POLL_INTERVAL)
 

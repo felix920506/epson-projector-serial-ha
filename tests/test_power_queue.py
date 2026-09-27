@@ -138,24 +138,33 @@ async def test_refusal_reveals_a_transition_and_the_command_still_lands(
     assert hass.states.get(SWITCH_ENTITY).state == STATE_OFF
 
 
-async def test_refusal_from_a_settled_projector_is_final(
-    hass: HomeAssistant, setup_integration: MockConfigEntry, projector: FakeProjector
+async def test_persistent_refusal_keeps_trying_then_times_out(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    projector: FakeProjector,
 ) -> None:
-    """A refusal with nothing transitioning is taken at its word.
+    """A projector that never accepts keeps being asked, then times out.
 
-    The state was read before the command and read again after the refusal. If
-    it is settled both times there is nothing to wait for and no reason to
-    expect a different answer, so the command is sent exactly once.
+    Failing on the first refusal would break automations during every warm-up,
+    so the deadline is the only thing that gives up -- and it is a backstop,
+    not an expected outcome.
     """
     projector.power = "05"  # abnormal standby
     projector.transition_reads = None
     projector.reject_commands = 99
     projector.commands.clear()
 
-    with pytest.raises(HomeAssistantError, match="ERR"):
+    with (
+        patch.object(
+            coordinator_module, "TRANSITION_TIMEOUT", timedelta(milliseconds=200)
+        ),
+        pytest.raises(HomeAssistantError) as caught,
+    ):
         await _turn(hass, True)
 
-    assert projector.commands.count(b"PWR ON") == 1
+    assert caught.value.translation_key == "projector_busy"
+    # It kept asking rather than giving up after the first refusal.
+    assert projector.commands.count(b"PWR ON") > 1
 
 
 async def test_endless_transition_eventually_fails(
@@ -169,9 +178,11 @@ async def test_endless_transition_eventually_fails(
         patch.object(
             coordinator_module, "TRANSITION_TIMEOUT", timedelta(milliseconds=200)
         ),
-        pytest.raises(HomeAssistantError, match="did not settle"),
+        pytest.raises(HomeAssistantError) as caught,
     ):
         await _turn(hass, False)
+
+    assert caught.value.translation_key == "projector_busy"
 
 
 async def test_unreachable_projector_fails_immediately(
@@ -213,9 +224,9 @@ async def test_pending_command_is_exposed_while_waiting(
 
     original = coordinator_module.EpsonProjectorCoordinator._async_wait_to_retry
 
-    async def record(self, deadline):
+    async def record(self, deadline, reason):
         seen.append(hass.states.get(SWITCH_ENTITY).attributes["pending_command"])
-        await original(self, deadline)
+        await original(self, deadline, reason)
 
     with patch.object(
         coordinator_module.EpsonProjectorCoordinator,
@@ -227,3 +238,56 @@ async def test_pending_command_is_exposed_while_waiting(
     assert seen and all(value == "on" for value in seen)
     # Cleared once the command lands.
     assert hass.states.get(SWITCH_ENTITY).attributes["pending_command"] is None
+
+
+async def test_refused_query_is_waited_out_not_reported(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, projector: FakeProjector
+) -> None:
+    """A projector that will not even report its state is waited out.
+
+    This is the reported failure: mid-transition the projector answers ERR to
+    PWR?, not just to PWR ON/OFF. The state cannot be read, so there is nothing
+    to reason about -- but the projector is plainly reachable, and an
+    automation should not fail because it asked at an awkward moment.
+    """
+    projector.power = "01"
+    projector.reject_queries = 4
+    projector.commands.clear()
+
+    await _turn(hass, False)
+
+    assert b"PWR OFF" in projector.commands
+    assert hass.states.get(SWITCH_ENTITY).state == STATE_OFF
+
+
+async def test_projector_refusing_everything_still_lands_once_it_settles(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, projector: FakeProjector
+) -> None:
+    """Queries and commands both refused for a while, then accepted."""
+    projector.power = "01"
+    projector.reject_queries = 2
+    projector.reject_commands = 2
+    projector.commands.clear()
+
+    await _turn(hass, False)
+
+    assert hass.states.get(SWITCH_ENTITY).state == STATE_OFF
+
+
+async def test_only_an_unreachable_bridge_fails_without_waiting(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, projector: FakeProjector
+) -> None:
+    """An unreachable bridge is the one case that fails immediately.
+
+    Patching the timeout down to nothing proves the call does not reach the
+    waiting path at all: there is nothing to wait for.
+    """
+    projector.mode = "offline"
+
+    with (
+        patch.object(coordinator_module, "TRANSITION_TIMEOUT", timedelta(hours=1)),
+        pytest.raises(HomeAssistantError) as caught,
+    ):
+        await _turn(hass, True)
+
+    assert caught.value.translation_key == "cannot_connect"
