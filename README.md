@@ -19,8 +19,8 @@ choice.
 - **Raw protocol state as its own entities** — warm-up and cool-down in their
   own right, as both a number and a readable name.
 - Config flow — no YAML, set up from the UI.
-- Adjustable polling interval (default 5 s), and a reconfigure step for when
-  the bridge changes address.
+- Adjustable polling interval and warm-up/cool-down timeout, and a reconfigure
+  step for when the bridge changes address.
 - Handles the single-connection nature of serial bridges: commands are
   serialised and retried, and a busy bridge does not knock the entity offline.
 
@@ -107,8 +107,13 @@ Bridge)**, then enter:
 Setup sends a `PWR?` query and fails fast if the projector does not answer, so
 a successful setup means the wiring and baud rate are right.
 
-The polling interval can be changed later under the integration's
-**Configure** button. If the bridge moves to a different IP or port, use
+Two settings live under the integration's **Configure** button:
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| Polling interval | 5 s | How often to read the power state. |
+| Warm-up/cool-down timeout | 180 s | How long to wait for the projector to become ready before giving up on a power command. Laser projectors transition in seconds; a lamp projector can take a couple of minutes to cool down, so raise this if commands time out. Accepts 10–900 s. |
+ If the bridge moves to a different IP or port, use
 **Reconfigure** on the device rather than deleting the entry — the entity and
 its history are kept.
 
@@ -162,7 +167,7 @@ automation or script sees a proper failure rather than a silent no-op:
 | Condition | Message |
 | --- | --- |
 | Bridge unreachable, or no ready prompt | Could not reach the projector at … |
-| Never became ready within 3 minutes | … was not ready to accept the power command in time |
+| Never became ready within the timeout | … was not ready to accept the power command in time |
 | Anything else on the command path | Power command … failed |
 
 There is deliberately no error for "the projector refused". A refusal means it

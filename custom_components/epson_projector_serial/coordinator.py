@@ -21,7 +21,6 @@ from .const import (
     POWER_ON_CODES,
     TRANSITION_POLL_INTERVAL,
     TRANSITION_TARGETS,
-    TRANSITION_TIMEOUT,
     TRANSITIONAL_POWER_CODES,
 )
 from .protocol import (
@@ -73,6 +72,7 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
         entry: EpsonConfigEntry,
         bridge: EpsonSerialBridge,
         scan_interval: int,
+        transition_timeout: int,
     ) -> None:
         """Initialise the coordinator."""
         super().__init__(
@@ -83,6 +83,7 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
             update_interval=timedelta(seconds=scan_interval),
         )
         self.bridge = bridge
+        self.transition_timeout = timedelta(seconds=transition_timeout)
         self.power_code: str | None = None
         self.pending_command: bool | None = None
         self._failures = 0
@@ -195,7 +196,7 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
         never becomes ready fails on the deadline, which is a backstop rather
         than an expected outcome.
         """
-        deadline = dt_util.utcnow() + TRANSITION_TIMEOUT
+        deadline = dt_util.utcnow() + self.transition_timeout
 
         while True:
             try:
@@ -267,7 +268,7 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
         if dt_util.utcnow() >= deadline:
             raise EpsonBusyError(
                 f"{self.bridge.target} was still not ready to accept the "
-                f"command after {TRANSITION_TIMEOUT.total_seconds():.0f}s "
+                f"command after {self.transition_timeout.total_seconds():.0f}s "
                 f"({reason})"
             )
         await asyncio.sleep(TRANSITION_POLL_INTERVAL)

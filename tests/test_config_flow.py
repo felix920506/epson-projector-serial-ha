@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -11,7 +13,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
 from .fake_projector import FakeProjector
-from custom_components.epson_projector_serial.const import DOMAIN
+from custom_components.epson_projector_serial.const import (
+    CONF_TRANSITION_TIMEOUT,
+    DEFAULT_TRANSITION_TIMEOUT,
+    DOMAIN,
+)
 
 
 async def test_user_flow(hass: HomeAssistant, projector: FakeProjector) -> None:
@@ -129,11 +135,39 @@ async def test_options_flow_changes_interval(
     assert result["type"] is FlowResultType.FORM
 
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_SCAN_INTERVAL: 30}
+        result["flow_id"],
+        {CONF_SCAN_INTERVAL: 30, CONF_TRANSITION_TIMEOUT: DEFAULT_TRANSITION_TIMEOUT},
     )
     await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert setup_integration.options == {CONF_SCAN_INTERVAL: 30}
+    assert setup_integration.options[CONF_SCAN_INTERVAL] == 30
     coordinator = setup_integration.runtime_data
     assert coordinator.update_interval.total_seconds() == 30
+
+
+async def test_options_flow_sets_transition_timeout(
+    hass: HomeAssistant, setup_integration: MockConfigEntry
+) -> None:
+    """The warm-up/cool-down timeout is configurable, for lamp projectors."""
+    coordinator = setup_integration.runtime_data
+    assert coordinator.transition_timeout == timedelta(
+        seconds=DEFAULT_TRANSITION_TIMEOUT
+    )
+
+    result = await hass.config_entries.options.async_init(setup_integration.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_SCAN_INTERVAL: 10, CONF_TRANSITION_TIMEOUT: 300},
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert setup_integration.options == {
+        CONF_SCAN_INTERVAL: 10,
+        CONF_TRANSITION_TIMEOUT: 300,
+    }
+    # Applied to the reloaded coordinator, not just stored.
+    reloaded = setup_integration.runtime_data
+    assert reloaded.transition_timeout == timedelta(seconds=300)
+    assert reloaded.update_interval == timedelta(seconds=10)

@@ -154,12 +154,9 @@ async def test_persistent_refusal_keeps_trying_then_times_out(
     projector.reject_commands = 99
     projector.commands.clear()
 
-    with (
-        patch.object(
-            coordinator_module, "TRANSITION_TIMEOUT", timedelta(milliseconds=200)
-        ),
-        pytest.raises(HomeAssistantError) as caught,
-    ):
+    setup_integration.runtime_data.transition_timeout = timedelta(milliseconds=200)
+
+    with pytest.raises(HomeAssistantError) as caught:
         await _turn(hass, True)
 
     assert caught.value.translation_key == "projector_busy"
@@ -174,12 +171,9 @@ async def test_endless_transition_eventually_fails(
     projector.power = "02"
     projector.transition_reads = None  # never settles
 
-    with (
-        patch.object(
-            coordinator_module, "TRANSITION_TIMEOUT", timedelta(milliseconds=200)
-        ),
-        pytest.raises(HomeAssistantError) as caught,
-    ):
+    setup_integration.runtime_data.transition_timeout = timedelta(milliseconds=200)
+
+    with pytest.raises(HomeAssistantError) as caught:
         await _turn(hass, False)
 
     assert caught.value.translation_key == "projector_busy"
@@ -284,10 +278,10 @@ async def test_only_an_unreachable_bridge_fails_without_waiting(
     """
     projector.mode = "offline"
 
-    with (
-        patch.object(coordinator_module, "TRANSITION_TIMEOUT", timedelta(hours=1)),
-        pytest.raises(HomeAssistantError) as caught,
-    ):
+    # A generous timeout proves the call never reaches the waiting path.
+    setup_integration.runtime_data.transition_timeout = timedelta(hours=1)
+
+    with pytest.raises(HomeAssistantError) as caught:
         await _turn(hass, True)
 
     assert caught.value.translation_key == "cannot_connect"

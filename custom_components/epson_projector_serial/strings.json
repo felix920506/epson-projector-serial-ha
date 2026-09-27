@@ -45,10 +45,12 @@
       "init": {
         "title": "Options",
         "data": {
-          "scan_interval": "Polling interval (seconds)"
+          "scan_interval": "Polling interval (seconds)",
+          "transition_timeout": "Warm-up/cool-down timeout"
         },
         "data_description": {
-          "scan_interval": "How often to ask the projector for its power state."
+          "scan_interval": "How often to ask the projector for its power state.",
+          "transition_timeout": "How long to wait for the projector to finish warming up or cooling down before giving up on a power command. Laser projectors transition in seconds; lamp projectors can take a couple of minutes to cool down."
         }
       }
     }

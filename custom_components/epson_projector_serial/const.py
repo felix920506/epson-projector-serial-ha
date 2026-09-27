@@ -11,6 +11,15 @@ DEFAULT_NAME: Final = "Epson Projector"
 DEFAULT_PORT: Final = 8002
 DEFAULT_SCAN_INTERVAL: Final = 5
 
+# Seconds to keep waiting for the projector to become ready before giving up on
+# a power command. Laser projectors transition in seconds; lamp models can take
+# a couple of minutes to cool down, hence the generous default and the option.
+DEFAULT_TRANSITION_TIMEOUT: Final = 180
+MIN_TRANSITION_TIMEOUT: Final = 10
+MAX_TRANSITION_TIMEOUT: Final = 900
+
+CONF_TRANSITION_TIMEOUT: Final = "transition_timeout"
+
 MANUFACTURER: Final = "Epson"
 
 # ESC/VP21 PWR? reply codes.
@@ -55,11 +64,6 @@ MAX_CONSECUTIVE_REFUSALS: Final = 12
 # projector may still report its previous state. Trust the commanded state for
 # this long rather than flipping the switch back and forth.
 COMMAND_GRACE_PERIOD: Final = timedelta(seconds=20)
-
-# How long to keep waiting for warm-up or cool-down to finish before giving up
-# on a power command. Epson transitions take well under a minute; this is a
-# backstop against a projector that never reports a settled state.
-TRANSITION_TIMEOUT: Final = timedelta(seconds=180)
 
 # How often to re-read the power state while waiting out a transition. The
 # bridge takes one connection at a time, so this stays well clear of a busy

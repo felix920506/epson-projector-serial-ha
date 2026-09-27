@@ -16,7 +16,16 @@ from homeassistant.helpers.selector import (
     NumberSelectorMode,
 )
 
-from .const import DEFAULT_NAME, DEFAULT_PORT, DEFAULT_SCAN_INTERVAL, DOMAIN
+from .const import (
+    CONF_TRANSITION_TIMEOUT,
+    DEFAULT_NAME,
+    DEFAULT_PORT,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_TRANSITION_TIMEOUT,
+    DOMAIN,
+    MAX_TRANSITION_TIMEOUT,
+    MIN_TRANSITION_TIMEOUT,
+)
 from .coordinator import EpsonConfigEntry
 from .protocol import EpsonConnectionError, EpsonError, EpsonSerialBridge
 
@@ -33,7 +42,23 @@ STEP_USER_SCHEMA = vol.Schema(
 )
 
 SCAN_INTERVAL_SELECTOR = NumberSelector(
-    NumberSelectorConfig(min=2, max=300, step=1, mode=NumberSelectorMode.BOX)
+    NumberSelectorConfig(
+        min=2,
+        max=300,
+        step=1,
+        mode=NumberSelectorMode.BOX,
+        unit_of_measurement="seconds",
+    )
+)
+
+TRANSITION_TIMEOUT_SELECTOR = NumberSelector(
+    NumberSelectorConfig(
+        min=MIN_TRANSITION_TIMEOUT,
+        max=MAX_TRANSITION_TIMEOUT,
+        step=5,
+        mode=NumberSelectorMode.BOX,
+        unit_of_measurement="seconds",
+    )
 )
 
 
@@ -135,19 +160,31 @@ class EpsonProjectorOptionsFlow(OptionsFlow):
         """Manage the options."""
         if user_input is not None:
             return self.async_create_entry(
-                data={CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL])}
+                data={
+                    CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
+                    CONF_TRANSITION_TIMEOUT: int(
+                        user_input[CONF_TRANSITION_TIMEOUT]
+                    ),
+                }
             )
 
-        current = self.config_entry.options.get(
-            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-        )
+        options = self.config_entry.options
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
                     vol.Required(
-                        CONF_SCAN_INTERVAL, default=current
-                    ): SCAN_INTERVAL_SELECTOR
+                        CONF_SCAN_INTERVAL,
+                        default=options.get(
+                            CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+                        ),
+                    ): SCAN_INTERVAL_SELECTOR,
+                    vol.Required(
+                        CONF_TRANSITION_TIMEOUT,
+                        default=options.get(
+                            CONF_TRANSITION_TIMEOUT, DEFAULT_TRANSITION_TIMEOUT
+                        ),
+                    ): TRANSITION_TIMEOUT_SELECTOR,
                 }
             ),
         )

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -62,12 +61,9 @@ async def test_projector_that_never_accepts_reports_busy(
     projector.transition_reads = None
     projector.reject_commands = 99
 
-    with (
-        patch.object(
-            coordinator_module, "TRANSITION_TIMEOUT", timedelta(milliseconds=200)
-        ),
-        pytest.raises(HomeAssistantError) as caught,
-    ):
+    setup_integration.runtime_data.transition_timeout = timedelta(milliseconds=200)
+
+    with pytest.raises(HomeAssistantError) as caught:
         await _turn_on(hass)
 
     assert caught.value.translation_domain == DOMAIN
@@ -81,12 +77,9 @@ async def test_stuck_transition_raises_translated_error(
     projector.power = "03"
     projector.transition_reads = None
 
-    with (
-        patch.object(
-            coordinator_module, "TRANSITION_TIMEOUT", timedelta(milliseconds=200)
-        ),
-        pytest.raises(HomeAssistantError) as caught,
-    ):
+    setup_integration.runtime_data.transition_timeout = timedelta(milliseconds=200)
+
+    with pytest.raises(HomeAssistantError) as caught:
         await _turn_on(hass)
 
     assert caught.value.translation_domain == DOMAIN
