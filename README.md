@@ -1,3 +1,5 @@
+<img src="https://brands.home-assistant.io/epson/logo.png" alt="Epson" height="56">
+
 # Epson Projector (Serial Bridge) for Home Assistant
 
 Control an Epson projector from Home Assistant over its RS-232 port, using the
@@ -243,3 +245,6 @@ a single-connection bridge will cause both to fail intermittently.
 ## License
 
 [MIT](LICENSE)
+
+Epson is a trademark of Seiko Epson Corporation. This project is not affiliated
+with or endorsed by Epson.
