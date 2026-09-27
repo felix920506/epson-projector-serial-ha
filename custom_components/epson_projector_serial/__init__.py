@@ -9,7 +9,7 @@ from .const import DEFAULT_SCAN_INTERVAL
 from .coordinator import EpsonConfigEntry, EpsonProjectorCoordinator
 from .protocol import EpsonSerialBridge
 
-PLATFORMS: list[Platform] = [Platform.SWITCH]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: EpsonConfigEntry) -> bool:

@@ -52,5 +52,23 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "power_state": {
+        "name": "Power state",
+        "state": {
+          "standby": "Standby",
+          "on": "On",
+          "warming_up": "Warming up",
+          "cooling_down": "Cooling down",
+          "standby_network_on": "Standby (network on)",
+          "abnormal_standby": "Abnormal standby"
+        }
+      },
+      "power_code": {
+        "name": "Power code"
+      }
+    }
   }
 }

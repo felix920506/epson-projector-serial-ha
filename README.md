@@ -12,15 +12,57 @@ choice.
 
 ## Features
 
-- Power switch (`switch.<name>`) with on/off control and polling.
+- Power switch with on/off control and polling.
+- **Power commands wait out warm-up and cool-down** instead of failing. The
+  projector refuses `PWR ON`/`PWR OFF` mid-transition, which breaks
+  automations; this queues the command until the projector can accept it.
+- **Raw protocol state as its own entities** — warm-up and cool-down in their
+  own right, as both a number and a readable name.
 - Config flow — no YAML, set up from the UI.
 - Adjustable polling interval (default 5 s), and a reconfigure step for when
   the bridge changes address.
 - Handles the single-connection nature of serial bridges: commands are
   serialised and retried, and a busy bridge does not knock the entity offline.
-- Warm-up (`PWR=02`) reports as **on** and cool-down (`PWR=03`) as **off**, so
-  the switch settles immediately after a command instead of bouncing.
-- Raw protocol state exposed as attributes: `power_code`, `power_status`.
+
+## Entities
+
+| Entity | Example | Notes |
+| --- | --- | --- |
+| `switch.<name>` | `on` | Plain on/off. Warm-up reads as on, cool-down as off, so it settles immediately after a command instead of bouncing. |
+| `sensor.<name>_power_state` | `warming_up` | The full state: `standby`, `on`, `warming_up`, `cooling_down`, `standby_network_on`, `abnormal_standby`. An enum sensor, so it works in UI pickers and `state:` triggers. |
+| `sensor.<name>_power_code` | `02` | The raw two-digit code from the projector's `PWR?` reply. |
+
+The switch also carries `power_code`, `power_status`, `pending_command` and
+`bridge` as attributes, so a template can read them without a second entity.
+
+## Warm-up and cool-down
+
+An Epson projector rejects `PWR ON` and `PWR OFF` while it is warming up or
+cooling down. A naive integration reports that as a failure, so an automation
+that turns the projector off and straight back on — or a second press of a
+dashboard button — fails for no good reason.
+
+Instead, a power command:
+
+1. Reads the current state.
+2. If the projector is mid-transition **towards the requested state**, returns
+   immediately. `turn_on` during warm-up has nothing to do.
+3. If it is mid-transition **away from it**, waits, re-reading every 3 s, until
+   the projector settles, then sends the command.
+4. If it is already in the requested state, sends nothing.
+5. If the command is refused anyway — the projector can slip into a transition
+   between the read and the command — looks again and retries once. A projector
+   that keeps refusing from a settled state (`abnormal standby`, say) fails the
+   call straight away rather than waiting out the timeout.
+
+Commands are serialised, so a second one queues behind the first rather than
+racing it. `switch.turn_on` called during a cool-down therefore blocks until
+the projector is actually on, which is usually what an automation wants; bear
+in mind it can take the better part of a minute. While waiting, the switch's
+`pending_command` attribute says which command is queued.
+
+A projector that never leaves a transition fails the call after 3 minutes
+rather than blocking forever.
 
 ## Requirements
 
@@ -88,6 +130,8 @@ A few details worth knowing:
   projector confirms sooner. The serial port goes briefly unresponsive at the
   start of warm-up, and the projector can still report its old state for a
   moment after accepting the command.
+- **Power commands wait for a transition to finish** rather than failing; see
+  [Warm-up and cool-down](#warm-up-and-cool-down) above.
 
 ### Power codes
 
@@ -125,13 +169,21 @@ logger:
 ## Development
 
 ```bash
-pip install -r requirements-test.txt
-pytest
+uv venv --python 3.14 .venv
+uv pip install -r requirements-test.txt
+.venv/bin/pytest
+.venv/bin/ruff check .
 ```
 
-The test suite runs the integration against a fake ESC/VP21 bridge, so the
-socket handling, retries and state mapping are all covered without hardware.
-It needs Python 3.14, which recent Home Assistant releases require.
+Plain `pip` works too, but it spends a long time backtracking through Home
+Assistant's dependency tree; `uv` resolves it in seconds. If a download times
+out, raise `UV_HTTP_TIMEOUT` — Home Assistant depends on `uv` itself, and that
+wheel is large.
+
+The test suite runs the integration against a fake ESC/VP21 bridge that
+refuses power commands mid-transition the way a real projector does, so the
+socket handling, retries, queuing and state mapping are all covered without
+hardware. It needs Python 3.14, which recent Home Assistant releases require.
 
 Verified against Home Assistant 2026.9.3 (Python 3.14.7). The stated 2025.1
 minimum reflects the Home Assistant APIs this integration uses, not a tested
