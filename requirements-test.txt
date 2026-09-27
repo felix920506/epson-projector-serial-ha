@@ -1,2 +1,5 @@
 pytest-homeassistant-custom-component
 ruff
+# Used by the brand image tests. Home Assistant pulls it in too, but these
+# tests import it directly.
+Pillow

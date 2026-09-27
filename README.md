@@ -29,6 +29,17 @@ choice.
 - Handles the single-connection nature of serial bridges: commands are
   serialised and retried, and a busy bridge does not knock the entity offline.
 
+## Branding
+
+The Epson wordmark ships with the integration in
+`custom_components/epson_projector_serial/brand/`, so Home Assistant shows it
+on the integration and device pages with nothing to configure.
+
+This needs Home Assistant 2026.3 or newer, which serves a custom integration's
+own brand images in preference to the
+[brands CDN](https://brands.home-assistant.io). On older versions the images are
+simply ignored and the UI falls back to a placeholder.
+
 ## Entities
 
 | Entity | Example | Notes |
