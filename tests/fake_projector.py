@@ -23,6 +23,10 @@ class FakeProjector:
         # How many of the next power commands to refuse outright, whatever the
         # power state says.
         self.reject_commands = 0
+        # Power state to adopt when refusing one, so a test can model the real
+        # race: the projector refuses because it has just begun transitioning,
+        # which the preceding read was too early to see.
+        self.power_after_rejection: str | None = None
         self._server: asyncio.Server | None = None
         self.port = 0
 
@@ -79,6 +83,8 @@ class FakeProjector:
             elif command in (b"PWR ON", b"PWR OFF"):
                 if self.reject_commands > 0:
                     self.reject_commands -= 1
+                    if self.power_after_rejection is not None:
+                        self.power = self.power_after_rejection
                     await self._send(writer, b"ERR\r:")
                 elif self.rejects_power_commands:
                     await self._send(writer, b"ERR\r:")

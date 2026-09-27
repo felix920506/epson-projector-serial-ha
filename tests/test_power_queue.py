@@ -21,8 +21,6 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .fake_projector import FakeProjector
 from custom_components.epson_projector_serial import coordinator as coordinator_module
-from custom_components.epson_projector_serial.const import MAX_COMMAND_REJECTIONS
-from custom_components.epson_projector_serial.protocol import COMMAND_ATTEMPTS
 
 SWITCH_ENTITY = "switch.epson_projector"
 
@@ -117,48 +115,47 @@ async def test_no_command_when_already_in_requested_state(
     assert b"PWR OFF" not in projector.commands
 
 
-async def test_refused_command_is_retried_and_lands(
+async def test_refusal_reveals_a_transition_and_the_command_still_lands(
     hass: HomeAssistant, setup_integration: MockConfigEntry, projector: FakeProjector
 ) -> None:
-    """A command refused once is sent again, not surfaced as a failure.
+    """A refusal is answered by re-reading, not by asking again.
 
-    The projector can slip into a transition between the read and the command,
-    so a single refusal from an apparently settled state is not conclusive.
+    This is the race the refusal path exists for: the projector begins warming
+    up just after we read it as settled, so it declines the command. Reading it
+    again reveals the transition, which is then waited out.
     """
     projector.power = "01"
-    # Exhaust the client's own retries, so the refusal reaches the coordinator
-    # rather than being absorbed a layer below.
-    projector.reject_commands = COMMAND_ATTEMPTS
+    projector.reject_commands = 1
+    projector.power_after_rejection = "02"  # it had already started warming
+    projector.transition_reads = 2
     projector.commands.clear()
 
     await _turn(hass, False)
 
-    assert projector.commands.count(b"PWR OFF") == COMMAND_ATTEMPTS + 1
+    # Declined once, then sent again only after the projector settled -- never
+    # repeated at a projector that had just said no.
+    assert projector.commands.count(b"PWR OFF") == 2
     assert hass.states.get(SWITCH_ENTITY).state == STATE_OFF
 
 
-async def test_persistently_refused_command_fails_fast(
+async def test_refusal_from_a_settled_projector_is_final(
     hass: HomeAssistant, setup_integration: MockConfigEntry, projector: FakeProjector
 ) -> None:
-    """A projector that just says no fails the call without waiting it out.
+    """A refusal with nothing transitioning is taken at its word.
 
-    Nothing is transitioning, so there is nothing to wait for -- sitting out
-    the full transition timeout would block an automation for minutes.
+    The state was read before the command and read again after the refusal. If
+    it is settled both times there is nothing to wait for and no reason to
+    expect a different answer, so the command is sent exactly once.
     """
     projector.power = "05"  # abnormal standby
     projector.transition_reads = None
     projector.reject_commands = 99
     projector.commands.clear()
 
-    with pytest.raises(HomeAssistantError):
+    with pytest.raises(HomeAssistantError, match="ERR"):
         await _turn(hass, True)
 
-    # Two rounds of the client's retries and no more: no waiting out the
-    # transition timeout, because nothing is transitioning.
-    assert (
-        projector.commands.count(b"PWR ON")
-        == MAX_COMMAND_REJECTIONS * COMMAND_ATTEMPTS
-    )
+    assert projector.commands.count(b"PWR ON") == 1
 
 
 async def test_endless_transition_eventually_fails(

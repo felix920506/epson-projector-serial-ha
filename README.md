@@ -50,10 +50,12 @@ Instead, a power command:
 3. If it is mid-transition **away from it**, waits, re-reading every 3 s, until
    the projector settles, then sends the command.
 4. If it is already in the requested state, sends nothing.
-5. If the command is refused anyway — the projector can slip into a transition
-   between the read and the command — looks again and retries once. A projector
-   that keeps refusing from a settled state (`abnormal standby`, say) fails the
-   call straight away rather than waiting out the timeout.
+5. If the command is refused anyway, **reads the state again rather than
+   repeating the command**. The projector can slip into a transition between
+   the read and the command, and the second read reveals it. If the state is
+   settled both times, the refusal is taken at its word and reported — a
+   projector in `abnormal standby` fails immediately instead of being asked
+   again.
 
 Commands are serialised, so a second one queues behind the first rather than
 racing it. `switch.turn_on` called during a cool-down therefore blocks until
@@ -120,9 +122,14 @@ A few details worth knowing:
 
 - **Reaching the ready prompt is the proof of delivery.** `PWR ON` and `PWR OFF`
   often do not acknowledge within the read window because the projector is
-  already busy transitioning, so a missing ack is treated as success. An
-  explicit `ERR`, a failed connection, or a missing ready prompt triggers a
-  retry (3 attempts).
+  already busy transitioning, so a missing ack is treated as success.
+- **A failed connection, a missing ready prompt or a truncated reply is
+  retried** (3 attempts), because the bridge takes one connection at a time and
+  may simply have been busy.
+- **An explicit `ERR` is not retried.** A refusal is a considered answer, and
+  it will still be true a fraction of a second later. It is passed up to the
+  layer that knows what might have caused it, which re-reads the power state
+  and decides — see [Warm-up and cool-down](#warm-up-and-cool-down).
 - **Failed polls keep the last known state** for up to 3 consecutive attempts
   before the entity is marked unavailable. A bridge that is momentarily busy
   looks identical to one that is offline.

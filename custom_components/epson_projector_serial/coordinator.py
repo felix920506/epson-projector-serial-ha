@@ -14,7 +14,6 @@ from homeassistant.util import dt as dt_util
 from .const import (
     COMMAND_GRACE_PERIOD,
     DOMAIN,
-    MAX_COMMAND_REJECTIONS,
     MAX_CONSECUTIVE_FAILURES,
     POWER_CODE_NAMES,
     POWER_ON_CODES,
@@ -23,7 +22,7 @@ from .const import (
     TRANSITION_TIMEOUT,
     TRANSITIONAL_POWER_CODES,
 )
-from .protocol import EpsonCommandError, EpsonError, EpsonSerialBridge
+from .protocol import EpsonError, EpsonRefusedError, EpsonSerialBridge
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -134,7 +133,7 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
         deadline = dt_util.utcnow() + TRANSITION_TIMEOUT
         reads = 0
         read_failures = 0
-        rejections = 0
+        refusal: EpsonRefusedError | None = None
 
         while True:
             reads += 1
@@ -166,9 +165,9 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
                         "on" if power_on else "off",
                     )
                     break
-                # There is a real reason to keep waiting, so past refusals
-                # stop counting against us.
-                rejections = 0
+                # A transition explains a refusal, and gives us something to
+                # wait for, so an earlier one stops being final.
+                refusal = None
                 _LOGGER.debug(
                     "Waiting out PWR=%s before turning %s",
                     code,
@@ -185,17 +184,24 @@ class EpsonProjectorCoordinator(DataUpdateCoordinator[bool]):
                 )
                 break
 
+            if refusal is not None:
+                # It refused, and this read says it is settled, so there is
+                # nothing to wait for and no reason to expect a different
+                # answer. Send the refusal on rather than asking again.
+                raise refusal
+
             try:
                 await self.bridge.async_set_power(power_on)
-            except EpsonCommandError as err:
-                # Most likely the projector slipped into a transition between
-                # the read and the command. Look again and wait it out -- but
-                # a projector that keeps refusing from a settled state is not
-                # going to start accepting, so do not sit out the timeout.
-                rejections += 1
-                if rejections >= MAX_COMMAND_REJECTIONS:
-                    raise
-                _LOGGER.debug("Power command refused, looking again: %s", err)
+            except EpsonRefusedError as err:
+                # The state we read says this should have been accepted, so the
+                # projector knows something we do not -- most likely it entered
+                # a transition between the read and the command. Read it again
+                # rather than repeating a command it has already declined. The
+                # pause matters: the serial port lags at the start of a
+                # transition, so an immediate re-read can still show the old
+                # state.
+                _LOGGER.debug("Power command refused, re-reading state: %s", err)
+                refusal = err
                 await self._async_wait_to_retry(deadline)
                 continue
 

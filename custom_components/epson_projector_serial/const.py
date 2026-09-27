@@ -55,12 +55,6 @@ COMMAND_GRACE_PERIOD: Final = timedelta(seconds=20)
 # backstop against a projector that never reports a settled state.
 TRANSITION_TIMEOUT: Final = timedelta(seconds=180)
 
-# How many times to re-send a refused power command. A refusal usually means
-# the projector slipped into a transition between the read and the command, so
-# one more try is worth it -- but if it keeps refusing from a settled state the
-# refusal is real, and there is nothing to wait for.
-MAX_COMMAND_REJECTIONS: Final = 2
-
 # How often to re-read the power state while waiting out a transition. The
 # bridge takes one connection at a time, so this stays well clear of a busy
 # poll.

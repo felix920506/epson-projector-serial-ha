@@ -64,7 +64,18 @@ class EpsonConnectionError(EpsonError):
 
 
 class EpsonCommandError(EpsonError):
-    """The projector rejected the command or gave an unusable reply."""
+    """The projector gave an unusable reply: truncated, or never sent."""
+
+
+class EpsonRefusedError(EpsonCommandError):
+    """The projector answered ERR.
+
+    A refusal is a considered answer, not a glitch, so it is not retried here:
+    whatever the projector is objecting to will still be true a fraction of a
+    second later. The caller knows why it might be refused -- a projector
+    mid-transition will not accept power commands -- and can re-read the state
+    and decide. Retrying blind just spends the projector's patience.
+    """
 
 
 class EpsonSerialBridge:
@@ -123,6 +134,8 @@ class EpsonSerialBridge:
                     await asyncio.sleep(RETRY_DELAY)
                 try:
                     return await self._async_attempt(command, matcher, read_timeout)
+                except EpsonRefusedError:
+                    raise
                 except EpsonError as err:
                     last_error = err
                     _LOGGER.debug(
@@ -172,7 +185,7 @@ class EpsonSerialBridge:
             await self._async_close(writer)
 
         if ERROR_REPLY in reply:
-            raise EpsonCommandError(f"Projector returned ERR to {command!r}")
+            raise EpsonRefusedError(f"Projector returned ERR to {command!r}")
         if matcher is not None and not complete:
             # A reply that never arrived, or arrived truncated. Only queries
             # insist on one; power commands pass matcher=None.
